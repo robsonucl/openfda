@@ -1,0 +1,582 @@
+---
+title: "Analysis of adverse events from openFDA data"
+author: Robson Machado
+output: html_document
+bibliography: references.bib  
+fontsize: 14pt 
+geometry: margin=1in
+nocite: '@*'
+---
+
+Load packages
+```{r, message=FALSE, warning=FALSE}
+library(httr)
+library(jsonlite)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(tableone)
+library(kableExtra)
+library(plotly)
+library(devtools)
+```
+
+
+
+```{css, echo=FALSE}
+pre {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+pre[class] {
+  max-height: 100px;
+}
+```
+
+```{css, echo=FALSE}
+.scroll-100 {
+  max-height: 100px;
+  overflow-y: auto;
+  background-color: inherit;
+}
+```
+
+
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Introduction
+
+- In this report, we use the openFDA data on adverse effects in patients using Imfinzi (Durvalumab), a cancer immunotherapy developed by Medimmune/AstraZeneca. The analysis carried out in this report, aims to answer the following research questions:
+
+1. What are the five countries with the highest number of registered adverse events 
+
+2. Differences in occurance and percentage of adverse events among those countries
+
+3. Differences in occurance and percentage of adverse events among different age groups across all patients taking Imfinzi globally 
+
+4. Differences in occurance and percentage of adverse events between patients taking Imfinzi and Tecentriq (Atezolizumab), another cancer immunotherapy treatment
+
+
+# openFDA data
+
+- The FDA Adverse Events Reporting System (FAERS) is a database that contains spontaneous adverse event reports that are submitted to FDA from the product manufacturer or directly from the consumer, healthcare professional, or other reporter.
+
+- The database supports the FDA's post marketing safety surveillance program for drug and therapeutic biologic products.
+
+- The database consists of more than fourteen (14) million reports since 1969 to August 2017. 
+
+- Each year, FDA receives over one (1) million adverse events and medication error reports associated with the use of drug or biologic products. 
+
+- Existence of a report does not establish causation.
+
+> Data Quality
+
+- There are many instances of duplicative reports and some reports do not
+contain all the necessary information.
+
+> Existence of a report does not establish causation
+
+- There is no certainty that a suspected drug caused the adverse events.
+
+- Adverse events may have been related to the underlying disease being
+treated, or caused by some other drug being taken concurrently, or
+occurred for other reasons.
+
+- The information in these reports reflects only the reporter's observations
+and opinions.
+
+> Information in reports has not been verified
+
+- Submission of a report does not mean that the information included in it
+has been medically confirmed.
+
+
+> Rates of occurrence cannot be established with reports
+
+- The number of adverse events should not be used to determine the
+likelihood of a side effect occurring.
+
+- Factors such as the time a product has been marketed and publicity can
+influence reporting.
+
+> Patient Outcomes received in FAERS
+
+- A reported serious outcomes does not necessarily mean that the suspect product(s) named in the report was the cause of these outcomes.
+
+- A report describes a suspected adverse event(s)
+
+> Strenghs
+
+- Includes all U.S. marketed products
+
+- Includes all uses
+
+- Includes broad patient populations:elderly, children, pregnant women, co- morbidities
+
+- Especially good for events with a rare background rate
+
+- Useful for events that occur shortly after exposure
+
+- Detection of events not seen in clinical trials (“signal generation”)
+
+- Identification of reporting trends, possible risk factors, at risk populations, and other clinically significant emerging safety concerns
+
+> Limitations
+
+- Events with high background rates
+
+- Worsening of pre-existing disease
+
+- Issue that goes beyond data captured from the MedWatch Form or electronic reporting
+
+- Comparative incidence rates
+
+- Comparing drugs in the same class
+
+- Adverse events that could also be manifestations of the disease for which the drug is indicated
+
+> Downloading openFDA data 
+
+- Data was downloaded automatically using the openFDA API. The API query is constructed by specifying desired fields contained in patients records. 
+
+
+- The following code searches for records where either durvalumab or imfinzi appear in the field indicating the medicinal product taken by the patient (patient.drug.medicinalproduct)
+
+```{r, eval=FALSE}
+search=patient.drug.medicinalproduct:"durvalumab+imfinzi" 
+```
+
+- In the following code the suffix .exact is required by openFDA to count the unique full phrases in the field indicating the type of adverse effect (patient.reaction.reactionmeddrapt). Without it, the API would count each word in that field individually, e.g., difficulty sleeping would be counted as separate values, difficulty and sleeping.
+
+```{r, eval=FALSE}
+count=patient.reaction.reactionmeddrapt.exact
+```
+
+# Number of reports by country
+
+- In this section we investigate the number of adverse events reports associated with Imfinzi (Durvalumab) 
+
+- Query the numbers of reports by country 
+
+- Restrict the search date to period between 01/01/2014 and 29/07/2020
+
+```{r, results='hide'}
+
+res = GET("https://api.fda.gov/drug/event.json?search=receivedate:[20140101+TO+20200729]+AND+(patient.drug.medicinalproduct:'durvalumab+imfinzi')&count=occurcountry.exact")
+
+rawToChar(res$content)
+
+data = fromJSON(rawToChar(res$content))
+
+dt_country= data$results %>% 
+        as_tibble() %>%
+        slice_head(n=15)
+
+```
+
+- The figure below displays 15 countries with highest number of reported adverse events. The US, Japan, Canada, France and Germany are in the top five. 
+
+
+```{r, fig.width=3, fig.height=5, message=FALSE, results='hide'}
+
+p = ggplot(data=dt_country, aes(x= reorder(term, count), y=count, width=0.8)) +
+        geom_bar(stat = "identity", fill="blue") +
+        labs(y="Number of cases", x="Countries") +
+        geom_text(aes(label=count), hjust=-0.3, size=3) +
+        theme_classic() +
+        coord_flip() 
+
+```
+
+
+```{r }
+p
+```
+
+# Adverse events reports by country {.tabset}
+
+- We investigate the number of adverse events reported in the five countries with the highest incidence of adverse events
+
+- We illustrate the top ten adverse events by country
+
+
+```{r, results='hide'}
+
+#Get US data
+res = GET("https://api.fda.gov/drug/event.json?search=receivedate:[20140101+TO+20200729]+AND+(patient.drug.medicinalproduct:'durvalumab+imfinzi')+AND+occurcountry:'US'&count=patient.reaction.reactionmeddrapt.exact")
+
+rawToChar(res$content)
+
+data = fromJSON(rawToChar(res$content))
+
+US_ae= data$results %>%
+        mutate(country="US") %>%
+        mutate(Percentage = 100*count/sum(count)) 
+
+#Get JP data
+res = GET("https://api.fda.gov/drug/event.json?search=receivedate:[20140101+TO+20200729]+AND+(patient.drug.medicinalproduct:'durvalumab+imfinzi')+AND+occurcountry:'JP'&count=patient.reaction.reactionmeddrapt.exact")
+
+rawToChar(res$content)
+
+data = fromJSON(rawToChar(res$content))
+
+JP_ae= data$results %>%
+        mutate(country="JP") %>%
+        mutate(Percentage = 100*count/sum(count)) 
+
+#Get CA data
+res = GET("https://api.fda.gov/drug/event.json?search=receivedate:[20140101+TO+20200729]+AND+(patient.drug.medicinalproduct:'durvalumab+imfinzi')+AND+occurcountry:'CA'&count=patient.reaction.reactionmeddrapt.exact")
+
+rawToChar(res$content)
+
+data = fromJSON(rawToChar(res$content))
+
+CA_ae= data$results %>%
+        mutate(country="CA") %>%
+        mutate(Percentage = 100*count/sum(count)) 
+
+
+#Get FR data
+res = GET("https://api.fda.gov/drug/event.json?search=receivedate:[20140101+TO+20200729]+AND+(patient.drug.medicinalproduct:'durvalumab+imfinzi')+AND+occurcountry:'FR'&count=patient.reaction.reactionmeddrapt.exact")
+
+rawToChar(res$content)
+
+data = fromJSON(rawToChar(res$content))
+
+FR_ae= data$results %>%
+        mutate(country="FR") %>%
+        mutate(Percentage = 100*count/sum(count)) 
+
+#Get DE data
+res = GET("https://api.fda.gov/drug/event.json?search=receivedate:[20140101+TO+20200729]+AND+(patient.drug.medicinalproduct:'durvalumab+imfinzi')+AND+occurcountry:'DE'&count=patient.reaction.reactionmeddrapt.exact")
+
+rawToChar(res$content)
+
+data = fromJSON(rawToChar(res$content))
+
+DE_ae= data$results %>%
+        mutate(country="DE") %>%
+        mutate(Percentage = 100*count/sum(count)) 
+
+#Combine the data sets and select the top 10 reports by country
+ae_all = bind_rows(US_ae, JP_ae, CA_ae, FR_ae, DE_ae) %>%
+        mutate(text = paste0("Country: ", country, "\n", "Reaction: ", term, "\n", "Percentage: ", round(Percentage,2))) %>%
+        group_by(country) %>%
+        slice_head(n=10) %>%
+        ungroup()
+
+
+```
+
+## US
+
+```{r, results='hide'}
+
+p = ggplot(data=US_ae %>% slice_head(n=10), aes(x= reorder(term, count), y=count, width=.8)) +
+        geom_bar(stat = "identity", fill="blue") +
+        expand_limits(y = 150) +
+        labs(y="Number of cases", x="") +
+        geom_text(aes(label=count), hjust=-0.3, size=3) +
+        theme_classic() +
+        coord_flip()
+```
+
+```{r}
+p
+```
+
+## Japan
+
+
+```{r, results='hide'}
+
+p = ggplot(data=JP_ae %>% slice_head(n=10) , aes(x= reorder(term, count), y=count, width=.8)) +
+        geom_bar(stat = "identity", fill="blue") +
+        expand_limits(y = 310) +
+        labs(y="Number of cases", x="") +
+        geom_text(aes(label=count), hjust=-0.3, size=3) +
+        theme_classic()+ 
+        coord_flip() 
+```
+
+```{r}
+p
+```
+
+## Canada
+
+
+```{r, results='hide'}
+
+p = ggplot(data=CA_ae %>% slice_head(n=10), aes(x= reorder(term, count), y=count, width=.8)) +
+        geom_bar(stat = "identity", fill="blue") +
+        labs(y="Number of cases", x="") +
+        geom_text(aes(label=count), hjust=-0.3, size=3) +
+        theme_classic() +
+        coord_flip()
+```
+
+```{r}
+p
+```
+
+## France
+
+```{r, results='hide'}
+
+p = ggplot(data=FR_ae %>% slice_head(n=10), aes(x= reorder(term, count), y=count, width=.8)) +
+        geom_bar(stat = "identity", fill="blue") +
+        labs(y="Number of cases", x="") +
+        geom_text(aes(label=count), hjust=-0.3, size=3) +
+        theme_classic() +
+        coord_flip()
+```
+
+```{r}
+p
+```
+
+## Germany
+
+```{r, results='hide'}
+
+p = ggplot(data=DE_ae %>% slice_head(n=10), aes(x= reorder(term, count), y=count, width=.8)) +
+        geom_bar(stat = "identity", fill="blue") +
+        labs(y="Number of cases", x="") +
+        geom_text(aes(label=count), hjust=-0.3, size=3) +
+        theme_classic() +
+        coord_flip()
+```
+
+```{r}
+p
+```
+
+
+# Interactive heatmap of adverse events by country
+
+- The distribution of the top ten adverse events accross countries can be visualised using an interactive heatmap
+
+- Use the cursor to obtain the exact percentages
+
+- Apart from Germany, all countries reported Malignant Neoplasm Progression 
+
+- Japan had the highest percentage of Radiation Pneumonitis
+
+- Death is not in the top 10 adverse events for France and Japan
+
+- Several adverse events occur amoung the top ten in only one country
+
+```{r, results='hide'}
+p = ggplot(ae_all, aes(country, term, fill=Percentage, text=text)) +
+        geom_tile() + 
+        labs(y="", x="Countries") +
+        theme_classic()
+```
+
+```{r, fig.width= 8, fig.height=8}
+ggplotly(p, tooltip = "text")
+```
+
+
+
+# Adverse events by age globally
+
+- In this section we investigate the difference among adverse event reported across different age groups (18-49, 50-64, 65-100 and missing age) globally.
+
+```{r, results='hide', warning=FALSE}
+
+#18-49
+res = GET("https://api.fda.gov/drug/event.json?search=receivedate:[20140101+TO+20200729]+AND+(patient.drug.medicinalproduct:'durvalumab+imfinzi')+AND+patient.patientonsetage:[18+TO+49]&count=patient.reaction.reactionmeddrapt.exact")
+
+rawToChar(res$content)
+
+data = fromJSON(rawToChar(res$content))
+
+dt_adult= data$results %>% 
+        as_tibble() %>%
+        mutate(age = "18-49") %>%
+        mutate(Percentage = 100*count/sum(count)) 
+
+#50-64
+res = GET("https://api.fda.gov/drug/event.json?search=receivedate:[20140101+TO+20200729]+AND+(patient.drug.medicinalproduct:'durvalumab+imfinzi')+AND+patient.patientonsetage:[50+TO+64]&count=patient.reaction.reactionmeddrapt.exact")
+
+
+rawToChar(res$content)
+
+data = fromJSON(rawToChar(res$content))
+
+dt_middle= data$results %>% 
+        as_tibble() %>%
+        mutate(age = "50-64") %>%
+        mutate(Percentage = 100*count/sum(count))
+
+#65-100
+res = GET("https://api.fda.gov/drug/event.json?search=receivedate:[20140101+TO+20200729]+AND+(patient.drug.medicinalproduct:'durvalumab+imfinzi')+AND+patient.patientonsetage:[65+TO+100]&count=patient.reaction.reactionmeddrapt.exact")
+
+
+rawToChar(res$content)
+
+data = fromJSON(rawToChar(res$content))
+
+dt_elderly= data$results %>% 
+        as_tibble() %>%
+        mutate(age = "65-100") %>%
+        mutate(Percentage = 100*count/sum(count))
+
+#Missing age
+
+res = GET("https://api.fda.gov/drug/event.json?search=receivedate:[20140101+TO+20200729]+AND+(patient.drug.medicinalproduct:'durvalumab+imfinzi')+AND+_missing_:patient.patientonsetage&count=patient.reaction.reactionmeddrapt.exact")
+
+
+rawToChar(res$content)
+
+data = fromJSON(rawToChar(res$content))
+
+dt_age_missing= data$results %>% 
+        as_tibble() %>%
+        mutate(age = "Unknown") %>%
+        mutate(Percentage = 100*count/sum(count))
+
+
+ae_age = bind_rows(dt_adult, dt_middle, dt_elderly, dt_age_missing) %>%
+        mutate(text = paste0("Age: ", age, "\n", "Reaction: ", term, "\n", "Percentage: ", round(Percentage,2))) %>%
+        group_by(age) %>%
+        slice_head(n=10) %>%
+        ungroup()
+
+
+age_aux = bind_rows(dt_adult,  dt_middle, dt_elderly, dt_age_missing) %>%
+        group_by(age) %>%
+        summarise(total = sum(count)) %>%
+        ungroup()
+
+```
+
+
+## Summary of adverse event reported by age groups
+
+- The age group 65-100 has the highest number of cases, while the age group 18-49 has the lowest
+
+- A significant proportion of cases has missing age
+
+```{r, fig.width=3, fig.height=5, message=FALSE, results='hide'}
+
+p = ggplot(data=age_aux, aes(x= age, y=total)) +
+        geom_bar(stat = "identity", fill="blue") +
+        labs(x="Age group", y="Number of cases") +
+        geom_text(aes(label=total), hjust=-0.3, size=3) +
+        theme_classic() +
+        expand_limits(y = 1350) +
+        coord_flip() 
+
+
+```
+
+
+```{r }
+p
+```
+
+
+# Interactive heatmap of adverse events by age group
+
+- The adverse events Radiation Pneumonitis, Pyrexia, Pneumonitis, Malignant Neoplasm Progression and Dyspnoea are present in at least 3 group ages
+
+- Radiation Pneumonitis is present in all age groups, but has the highest percentage in the 65-100 age group
+
+- Death is the most commun adverse event for patients with missing age
+
+```{r, results='hide'}
+p = ggplot(ae_age, aes(age, term, fill=Percentage, text=text)) +
+        geom_tile() + 
+        labs(x="Age group", y="") +
+        theme_classic()
+```
+
+```{r, fig.width= 8, fig.height=8}
+ggplotly(p, tooltip = "text")
+```
+
+
+# Imfinzi versus Tecentriq 
+
+- In this section, we investigate the ten most commun adverse events in patients treated with Imfinzi or Tecentriq (including their generic names) globally
+
+```{r, results='hide'}
+
+# Atezo
+res = GET("https://api.fda.gov/drug/event.json?search=receivedate:[20140101+TO+20200729]+AND+(patient.drug.medicinalproduct:'atezolizumab+tecentriq')&count=patient.reaction.reactionmeddrapt.exact")
+
+rawToChar(res$content)
+
+data = fromJSON(rawToChar(res$content))
+
+dt_tec= data$results %>% 
+        as_tibble() %>%
+        mutate(Treatment = "Tecentriq") %>%
+        mutate(Percentage = 100*count/sum(count)) 
+
+# Durva
+res = GET("https://api.fda.gov/drug/event.json?search=receivedate:[20140101+TO+20200729]+AND+(patient.drug.medicinalproduct:durvalumab+imfinzi)&count=patient.reaction.reactionmeddrapt.exact")
+
+rawToChar(res$content)
+
+data = fromJSON(rawToChar(res$content))
+
+dt_durva= data$results %>% 
+        as_tibble() %>%
+        mutate(Treatment = "Imfinzi") %>%
+        mutate(Percentage = 100*count/sum(count)) 
+
+
+
+ae_tec_durva = bind_rows(dt_tec, dt_durva) %>%
+        mutate(text = paste0("Treatment: ", Treatment, "\n", "Reaction: ", term, "\n", "Percentage: ", round(Percentage,2))) %>%
+        group_by(Treatment) %>%
+        slice_head(n=10) %>%
+        ungroup()
+
+```
+
+
+## Interactive heatmap of adverse events by treatment 
+
+- Radiation pneumonitis does not appear in the top ten adverse events for Tecentriq patients. However, it is one of the most commun for Imfinzi patients
+
+- The percentages of deaths is similar between both treatment groups
+
+
+
+```{r, results='hide'}
+p = ggplot(ae_tec_durva, aes(Treatment, term, fill=Percentage, text=text)) +
+        geom_tile() + 
+        labs(x="Age group", y="") +
+        theme_classic()
+
+```
+
+```{r, fig.width= 8, fig.height=8}
+ggplotly(p, tooltip = "text")
+```
+
+# Environment
+
+```{r, results='asis'}
+session = sessionInfo()
+```
+
+```{r}
+session$R.version$version.string
+session$R.version$platform
+session$running
+```
+
+# Reference 
+
+
